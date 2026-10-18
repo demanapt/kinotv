@@ -28,5 +28,8 @@ code, name, url, notes = sys.argv[1:]
 print(json.dumps({"versionCode": int(code), "versionName": name, "apkUrl": url, "notes": notes}, ensure_ascii=False))
 PY
 
+# Код тоже отправляем на GitHub, чтобы он совпадал с выпущенной версией
+git push -q origin HEAD
+
 gh release create "$TAG" dist/KinoTV.apk dist/version.json --repo "$REPO" --title "KinoTV $NAME" --notes "${NOTES:-Обновление}"
 echo "Готово: версия $NAME (код $CODE) опубликована. Приставка увидит её при следующем запуске KinoTV."
