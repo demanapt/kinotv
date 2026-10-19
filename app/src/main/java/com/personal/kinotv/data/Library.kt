@@ -1,0 +1,54 @@
+package com.personal.kinotv.data
+
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
+import java.io.File
+
+/** Избранное и «Продолжить просмотр». Хранится в JSON-файле на приставке. */
+class Library(private val file: File) {
+
+    @Serializable
+    private data class Data(val favorites: List<Card> = emptyList(), val history: List<Card> = emptyList())
+
+    private val json = Json { ignoreUnknownKeys = true }
+    private var data = load()
+
+    private val _favorites = MutableStateFlow(data.favorites)
+    private val _history = MutableStateFlow(data.history)
+    val favorites: StateFlow<List<Card>> = _favorites.asStateFlow()
+    val history: StateFlow<List<Card>> = _history.asStateFlow()
+
+    fun isFavorite(url: String) = data.favorites.any { it.url == url }
+
+    @Synchronized
+    fun toggleFavorite(card: Card) {
+        val list = data.favorites
+        update(data.copy(favorites = if (list.any { it.url == card.url }) list.filterNot { it.url == card.url } else listOf(card) + list))
+    }
+
+    /** Поднимает тайтл в начало «Продолжить просмотр». */
+    @Synchronized
+    fun addToHistory(card: Card) {
+        update(data.copy(history = (listOf(card) + data.history.filterNot { it.url == card.url }).take(MAX_HISTORY)))
+    }
+
+    @Synchronized
+    fun removeFromHistory(url: String) = update(data.copy(history = data.history.filterNot { it.url == url }))
+
+    private fun update(new: Data) {
+        data = new
+        _favorites.value = new.favorites
+        _history.value = new.history
+        runCatching { file.writeText(json.encodeToString(Data.serializer(), new)) }
+    }
+
+    private fun load(): Data =
+        runCatching { json.decodeFromString(Data.serializer(), file.readText()) }.getOrDefault(Data())
+
+    private companion object {
+        const val MAX_HISTORY = 40
+    }
+}
