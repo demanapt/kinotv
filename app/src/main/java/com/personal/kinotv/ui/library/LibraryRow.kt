@@ -18,6 +18,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
+import com.personal.kinotv.ui.common.LocalTabsFocused
 import com.personal.kinotv.data.Card
 import com.personal.kinotv.ui.common.Dimens
 import com.personal.kinotv.ui.common.PosterCard
@@ -33,6 +34,7 @@ internal fun LibraryRow(
     onClick: (Card) -> Unit,
 ) {
     val firstPosterFocus = remember { FocusRequester() }
+    val tabsFocused = LocalTabsFocused.current
 
     Column(Modifier.fillMaxWidth()) {
         Text(
@@ -64,7 +66,7 @@ internal fun LibraryRow(
                         LaunchedEffect(Unit) {
                             // Постер уже создан ленивым списком; ждём его размещения.
                             withFrameNanos { }
-                            firstPosterFocus.requestFocus()
+                            if (!tabsFocused.value) firstPosterFocus.requestFocus()
                             onInitialFocusHandled()
                         }
                     }

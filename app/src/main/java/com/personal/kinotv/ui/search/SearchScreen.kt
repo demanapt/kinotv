@@ -19,6 +19,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
+import com.personal.kinotv.ui.common.LocalTabsFocused
 import com.personal.kinotv.ui.common.Dimens
 import com.personal.kinotv.ui.common.LoadingBox
 import com.personal.kinotv.ui.theme.KinoColors
@@ -33,9 +34,10 @@ fun SearchScreen() {
     val inputFocus = remember { FocusRequester() }
     val normalized = text.trim()
 
+    val tabsFocused = LocalTabsFocused.current
     LaunchedEffect(Unit) {
         withFrameNanos { }
-        inputFocus.requestFocus()
+        if (!tabsFocused.value) inputFocus.requestFocus()
     }
 
     LaunchedEffect(text) {

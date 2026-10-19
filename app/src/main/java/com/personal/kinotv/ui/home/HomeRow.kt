@@ -24,6 +24,7 @@ import androidx.compose.ui.focus.focusRestorer
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
+import com.personal.kinotv.ui.common.LocalTabsFocused
 import com.personal.kinotv.data.Card
 import com.personal.kinotv.ui.common.Dimens
 import com.personal.kinotv.ui.common.ErrorBox
@@ -50,6 +51,7 @@ internal fun HomeRow(
     badge: (Int) -> String? = { null },
 ) {
     val posterFocus = remember { FocusRequester() }
+    val tabsFocused = LocalTabsFocused.current
     val errorFocus = remember { FocusRequester() }
     val targetIndex = target?.let {
         cards.indexOfFirst { card -> card.url == it.url }.takeIf { index -> index >= 0 }
@@ -64,7 +66,7 @@ internal fun HomeRow(
             if (state.layoutInfo.visibleItemsInfo.none { it.key == url }) state.scrollToItem(index)
             snapshotFlow { state.layoutInfo.visibleItemsInfo.any { it.key == url } }.first { it }
             withFrameNanos { }
-            posterFocus.requestFocus()
+            if (!tabsFocused.value) posterFocus.requestFocus()
             onFocusHandled()
         } else if (error != null) {
             withFrameNanos { }

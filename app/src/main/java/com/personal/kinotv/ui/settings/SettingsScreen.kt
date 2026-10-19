@@ -43,6 +43,7 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Surface
 import androidx.tv.material3.SurfaceDefaults
 import androidx.tv.material3.Text
+import com.personal.kinotv.ui.common.LocalTabsFocused
 import com.personal.kinotv.KinoApp
 import com.personal.kinotv.ui.common.Dimens
 import com.personal.kinotv.ui.common.LocalAppActions
@@ -79,9 +80,10 @@ fun SettingsScreen() {
         siteUrl = KinoApp.settings.siteUrl
     }
 
+    val tabsFocused = LocalTabsFocused.current
     LaunchedEffect(Unit) {
         withFrameNanos { }
-        siteFocus.requestFocus()
+        if (!tabsFocused.value) siteFocus.requestFocus()
     }
     LaunchedEffect(cacheMessage) {
         if (cacheMessage != null) {

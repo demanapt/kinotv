@@ -21,6 +21,7 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.unit.dp
+import com.personal.kinotv.ui.common.LocalTabsFocused
 import com.personal.kinotv.KinoApp
 import com.personal.kinotv.data.Card
 import com.personal.kinotv.data.EpisodeUpdate
@@ -44,6 +45,7 @@ internal data class HomeBannerTitle(val card: Card, val episode: EpisodeUpdate? 
 @Composable
 fun HomeScreen() {
     val actions = LocalAppActions.current
+    val tabsFocused = LocalTabsFocused.current
     val history by KinoApp.library.history.collectAsState()
     var episodes by remember { mutableStateOf<List<EpisodeUpdate>>(emptyList()) }
     var episodesLoading by remember { mutableStateOf(true) }
@@ -153,7 +155,9 @@ fun HomeScreen() {
         if (target.row != BANNER) return@LaunchedEffect
         if (banner != null) {
             withFrameNanos { }
-            if (target.index == 1) detailsFocus.requestFocus() else playFocus.requestFocus()
+            if (!tabsFocused.value) {
+                if (target.index == 1) detailsFocus.requestFocus() else playFocus.requestFocus()
+            }
             pendingFocus = null
         } else if (bannerUnavailable && firstFocusableRow != null) {
             pendingFocus = HomeFocusTarget(firstFocusableRow)

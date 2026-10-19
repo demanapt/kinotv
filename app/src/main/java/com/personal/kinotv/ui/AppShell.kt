@@ -12,9 +12,15 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -31,6 +37,7 @@ import com.personal.kinotv.data.Sections
 import com.personal.kinotv.ui.category.SectionScreen
 import com.personal.kinotv.ui.common.AppActions
 import com.personal.kinotv.ui.common.LocalAppActions
+import com.personal.kinotv.ui.common.LocalTabsFocused
 import com.personal.kinotv.ui.details.DetailsScreen
 import com.personal.kinotv.ui.home.HomeScreen
 import com.personal.kinotv.ui.library.LibraryScreen
@@ -97,9 +104,12 @@ fun AppNavigation(
     }
 }
 
+@OptIn(ExperimentalComposeUiApi::class)
 @Composable
 private fun MainTabs(onExitRequest: () -> Unit) {
     var selected by rememberSaveable { mutableIntStateOf(0) }
+    val tabsFocused = remember { mutableStateOf(false) }
+    val tabFocus = remember { List(tabs.size) { FocusRequester() } }
 
     // «Назад» на любой вкладке, кроме главной, возвращает на главную; на главной — выход
     BackHandler { if (selected != 0) selected = 0 else onExitRequest() }
@@ -107,10 +117,15 @@ private fun MainTabs(onExitRequest: () -> Unit) {
     Column(Modifier.fillMaxSize()) {
         TabRow(
             selectedTabIndex = selected,
-            modifier = Modifier.padding(start = 40.dp, top = 16.dp, bottom = 8.dp),
+            modifier = Modifier
+                .padding(start = 40.dp, top = 16.dp, bottom = 8.dp)
+                .onFocusChanged { tabsFocused.value = it.hasFocus }
+                // ↑ из содержимого возвращает на выбранную вкладку, а не на ближайшую по расстоянию
+                .focusProperties { enter = { tabFocus[selected] } },
         ) {
             tabs.forEachIndexed { index, tab ->
                 Tab(
+                    modifier = Modifier.focusRequester(tabFocus[index]),
                     selected = index == selected,
                     onFocus = { selected = index },
                     onClick = { selected = index },
@@ -120,12 +135,14 @@ private fun MainTabs(onExitRequest: () -> Unit) {
             }
         }
         Box(Modifier.fillMaxSize()) {
-            when (val tab = tabs[selected]) {
-                TabItem.Home -> HomeScreen()
-                is TabItem.Category -> SectionScreen(tab.section)
-                TabItem.Search -> SearchScreen()
-                TabItem.Library -> LibraryScreen()
-                TabItem.Settings -> SettingsScreen()
+            CompositionLocalProvider(LocalTabsFocused provides tabsFocused) {
+                when (val tab = tabs[selected]) {
+                    TabItem.Home -> HomeScreen()
+                    is TabItem.Category -> SectionScreen(tab.section)
+                    TabItem.Search -> SearchScreen()
+                    TabItem.Library -> LibraryScreen()
+                    TabItem.Settings -> SettingsScreen()
+                }
             }
         }
     }

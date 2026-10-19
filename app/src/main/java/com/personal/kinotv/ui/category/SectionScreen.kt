@@ -18,6 +18,7 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.personal.kinotv.ui.common.LocalTabsFocused
 import com.personal.kinotv.data.Section
 import com.personal.kinotv.data.Sections
 import com.personal.kinotv.ui.theme.KinoColors
@@ -53,8 +54,9 @@ private fun SectionContent(section: Section, filtersState: SectionFiltersState) 
         selectedFocus.requestFocus()
     }
 
+    val tabsFocused = LocalTabsFocused.current
     LaunchedEffect(section.slug) {
-        focusSelectedFilter()
+        if (!tabsFocused.value) focusSelectedFilter()
     }
 
     Column(Modifier.fillMaxSize().background(KinoColors.Background)) {
