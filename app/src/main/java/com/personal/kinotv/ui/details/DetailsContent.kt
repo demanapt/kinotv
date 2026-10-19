@@ -49,10 +49,14 @@ internal fun DetailsContent(details: Details) {
     val isFavorite = favorites.any { it.url == details.url }
     val card = remember(details) { details.toCard() }
     val mainFocus = remember { FocusRequester() }
+    val scroll = rememberScrollState()
 
     LaunchedEffect(details.url) {
         withFrameNanos { }
         mainFocus.requestFocus()
+        // Фокус на кнопке прокручивает экран вниз — возвращаем наверх, чтобы было видно название
+        withFrameNanos { }
+        scroll.scrollTo(0)
     }
 
     Box(Modifier.fillMaxSize()) {
@@ -60,7 +64,7 @@ internal fun DetailsContent(details: Details) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .verticalScroll(rememberScrollState())
+                .verticalScroll(scroll)
                 .padding(top = 32.dp, bottom = 24.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
@@ -184,7 +188,7 @@ private fun DetailsInformation(details: Details, modifier: Modifier = Modifier) 
                 description,
                 style = MaterialTheme.typography.bodyMedium,
                 color = KinoColors.TextSecondary,
-                maxLines = 5,
+                maxLines = 4,
                 overflow = TextOverflow.Ellipsis,
             )
         }

@@ -93,11 +93,12 @@ object Parsers {
         }
 
         val related = doc.select(".viewMore .relatedItem a[href]").map { a ->
+            val (title, year) = splitYear(a.selectFirst("span")?.text() ?: a.attr("title"))
             Card(
                 url = a.absUrl("href"),
-                title = a.selectFirst("span")?.text() ?: splitYear(a.attr("title")).first,
+                title = title,
                 poster = imageUrl(a.selectFirst("img")),
-                year = splitYear(a.attr("title")).second,
+                year = year ?: splitYear(a.attr("title")).second,
             )
         }
 
