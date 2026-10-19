@@ -1,7 +1,9 @@
 package com.personal.kinotv.ui.theme
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.graphics.Color
+import androidx.tv.material3.LocalContentColor
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.darkColorScheme
 
@@ -31,6 +33,8 @@ fun KinoTheme(content: @Composable () -> Unit) {
             onSurfaceVariant = KinoColors.TextSecondary,
             border = KinoColors.FocusBorder,
         ),
-        content = content,
-    )
+    ) {
+        // Текст по умолчанию белый: экраны рисуются прямо на тёмном фоне, без Surface
+        CompositionLocalProvider(LocalContentColor provides KinoColors.TextPrimary, content = content)
+    }
 }
