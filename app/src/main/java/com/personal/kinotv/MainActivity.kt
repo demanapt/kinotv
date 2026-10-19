@@ -42,16 +42,21 @@ class MainActivity : ComponentActivity() {
         if (intent.action == Updater.ACTION_INSTALL_STATUS) updater.handleInstallStatus(intent)
     }
 
-    /** Запуск просмотра: запоминаем в «Продолжить просмотр» и открываем плеер сайта. */
+    /**
+     * Запуск просмотра. Ссылки на плееры одноразовые, поэтому всегда берём свежую страницу тайтла
+     * и выбираем плеер по подписи: тот, что нажали, или тот, в котором смотрели в прошлый раз.
+     */
     private fun play(card: Card, source: PlayerSource?) {
         lifecycleScope.launch {
-            val player = source ?: runCatching { KinoApp.repository.details(card.url).players.firstOrNull() }.getOrNull()
+            val players = runCatching { KinoApp.repository.details(card.url, fresh = true).players }.getOrDefault(emptyList())
+            val wanted = source?.label ?: KinoApp.library.progressFor(card.url)?.player
+            val player = players.firstOrNull { it.label == wanted } ?: players.firstOrNull() ?: source
             if (player == null) {
                 toast("Не нашёл плеер для «${card.title}»")
                 return@launch
             }
             KinoApp.library.addToHistory(card)
-            PlayerActivity.start(this@MainActivity, player.url, card.title)
+            PlayerActivity.start(this@MainActivity, player.url, card.title, card.url, player.label)
         }
     }
 

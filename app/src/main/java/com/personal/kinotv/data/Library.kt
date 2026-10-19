@@ -7,11 +7,15 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import java.io.File
 
-/** Избранное и «Продолжить просмотр». Хранится в JSON-файле на приставке. */
+/** Избранное, «Продолжить просмотр» и места остановки. Хранится в JSON-файле на приставке. */
 class Library(private val file: File) {
 
     @Serializable
-    private data class Data(val favorites: List<Card> = emptyList(), val history: List<Card> = emptyList())
+    private data class Data(
+        val favorites: List<Card> = emptyList(),
+        val history: List<Card> = emptyList(),
+        val progress: Map<String, WatchProgress> = emptyMap(),
+    )
 
     private val json = Json { ignoreUnknownKeys = true }
     private var data = load()
@@ -20,6 +24,22 @@ class Library(private val file: File) {
     private val _history = MutableStateFlow(data.history)
     val favorites: StateFlow<List<Card>> = _favorites.asStateFlow()
     val history: StateFlow<List<Card>> = _history.asStateFlow()
+    private val _progress = MutableStateFlow(data.progress)
+
+    /** Где остановился просмотр, по адресу страницы тайтла. */
+    val progress: StateFlow<Map<String, WatchProgress>> = _progress.asStateFlow()
+
+    fun progressFor(url: String): WatchProgress? = data.progress[url]
+
+    @Synchronized
+    fun saveProgress(url: String, progress: WatchProgress) {
+        // Храним только последние тайтлы, чтобы файл не рос бесконечно
+        val map = (data.progress + (url to progress)).entries
+            .sortedByDescending { it.value.updatedAt }
+            .take(MAX_PROGRESS)
+            .associate { it.key to it.value }
+        update(data.copy(progress = map))
+    }
 
     fun isFavorite(url: String) = data.favorites.any { it.url == url }
 
@@ -42,6 +62,7 @@ class Library(private val file: File) {
         data = new
         _favorites.value = new.favorites
         _history.value = new.history
+        _progress.value = new.progress
         runCatching { file.writeText(json.encodeToString(Data.serializer(), new)) }
     }
 
@@ -50,5 +71,6 @@ class Library(private val file: File) {
 
     private companion object {
         const val MAX_HISTORY = 40
+        const val MAX_PROGRESS = 200
     }
 }

@@ -33,7 +33,7 @@ class KinoApp : Application(), SingletonImageLoader.Factory {
         super.onCreate()
         settings = AppSettings(this)
         client = SiteClient(cacheDir) { settings.siteUrl }
-        repository = Repository(client)
+        repository = Repository(client, File(filesDir, "details"))
         library = Library(File(filesDir, "library.json"))
     }
 

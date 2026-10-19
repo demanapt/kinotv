@@ -14,7 +14,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -46,17 +45,17 @@ import com.personal.kinotv.ui.theme.KinoColors
 internal fun DetailsContent(details: Details) {
     val actions = LocalAppActions.current
     val favorites by KinoApp.library.favorites.collectAsState()
+    val progressMap by KinoApp.library.progress.collectAsState()
+    // Есть незаконченный просмотр — первая кнопка продолжает его
+    val progress = progressMap[details.url]?.takeIf { !it.finished && it.time > 30 }
+
     val isFavorite = favorites.any { it.url == details.url }
     val card = remember(details) { details.toCard() }
     val mainFocus = remember { FocusRequester() }
-    val scroll = rememberScrollState()
 
     LaunchedEffect(details.url) {
         withFrameNanos { }
         mainFocus.requestFocus()
-        // Фокус на кнопке прокручивает экран вниз — возвращаем наверх, чтобы было видно название
-        withFrameNanos { }
-        scroll.scrollTo(0)
     }
 
     Box(Modifier.fillMaxSize()) {
@@ -64,9 +63,9 @@ internal fun DetailsContent(details: Details) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .verticalScroll(scroll)
-                .padding(top = 32.dp, bottom = 24.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+                // Без прокрутки: всё помещается на один экран, и фокусу некуда «уезжать»
+                .padding(top = 28.dp, bottom = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             DetailsInformation(
                 details = details,
@@ -78,17 +77,26 @@ internal fun DetailsContent(details: Details) {
                 modifier = Modifier
                     .fillMaxWidth()
                     .horizontalScroll(rememberScrollState())
-                    .padding(horizontal = Dimens.ScreenPadding, vertical = 12.dp),
+                    .padding(horizontal = Dimens.ScreenPadding, vertical = 4.dp),
                 horizontalArrangement = Arrangement.spacedBy(Dimens.RowSpacing),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 if (details.players.isEmpty()) {
                     Button(onClick = {}, enabled = false) { Text("Плеер недоступен") }
                 } else {
+                    if (progress != null) {
+                        val resumePlayer = details.players.firstOrNull { it.label == progress.player } ?: details.players.first()
+                        Button(
+                            onClick = { actions.play(card, resumePlayer) },
+                            modifier = Modifier.focusRequester(mainFocus),
+                        ) {
+                            Text("▶ Продолжить · ${progress.text()}")
+                        }
+                    }
                     details.players.forEachIndexed { index, player ->
                         Button(
                             onClick = { actions.play(card, player) },
-                            modifier = if (index == 0) Modifier.focusRequester(mainFocus) else Modifier,
+                            modifier = if (index == 0 && progress == null) Modifier.focusRequester(mainFocus) else Modifier,
                         ) {
                             val label = player.label.takeIf { it.isNotBlank() } ?: "Плеер ${index + 1}"
                             Text(if (index == 0) "▶ Смотреть" else "▶ $label")
@@ -119,7 +127,7 @@ internal fun DetailsContent(details: Details) {
                             PosterCard(
                                 card = related,
                                 onClick = { actions.openDetails(related) },
-                                width = 120.dp,
+                                width = 100.dp,
                             )
                         }
                     }
@@ -188,7 +196,7 @@ private fun DetailsInformation(details: Details, modifier: Modifier = Modifier) 
                 description,
                 style = MaterialTheme.typography.bodyMedium,
                 color = KinoColors.TextSecondary,
-                maxLines = 4,
+                maxLines = 3,
                 overflow = TextOverflow.Ellipsis,
             )
         }
@@ -199,17 +207,13 @@ private fun DetailsInformation(details: Details, modifier: Modifier = Modifier) 
             if (directors.isNotEmpty()) add("Режиссёр: ${directors.joinToString(", ")}")
         }
         if (credits.isNotEmpty()) {
-            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                credits.forEach { credit ->
-                    Text(
-                        credit,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = KinoColors.TextSecondary,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-            }
+            Text(
+                credits.joinToString("   ·   "),
+                style = MaterialTheme.typography.bodySmall,
+                color = KinoColors.TextSecondary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
         }
     }
 }

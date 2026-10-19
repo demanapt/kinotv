@@ -2,11 +2,11 @@ package com.personal.kinotv.ui.home
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -15,37 +15,54 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameNanos
+import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.unit.dp
-import com.personal.kinotv.ui.common.LocalTabsFocused
 import com.personal.kinotv.KinoApp
 import com.personal.kinotv.data.Card
 import com.personal.kinotv.data.EpisodeUpdate
 import com.personal.kinotv.data.Sections
 import com.personal.kinotv.ui.common.LocalAppActions
+import com.personal.kinotv.ui.common.LocalTabsFocused
 import com.personal.kinotv.ui.common.rememberPagedList
 import com.personal.kinotv.ui.theme.KinoColors
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 
-private const val BANNER = "banner"
 private const val HISTORY = "history"
 private const val EPISODES = "episodes"
 
-internal data class HomeFocusTarget(val row: String, val index: Int = 0, val url: String? = null)
+private data class HomeFocusTarget(val row: String, val index: Int = 0, val url: String? = null)
 
-internal data class HomeBannerTitle(val card: Card, val episode: EpisodeUpdate? = null) {
-    val poster: String get() = episode?.bigPoster?.takeIf { it.isNotBlank() } ?: card.poster
+private data class HomeContentRow(
+    val key: String,
+    val title: String,
+    val cards: List<Card>,
+    val state: LazyListState,
+    val loading: Boolean = false,
+    val error: String? = null,
+    val canLoadMore: Boolean = false,
+    val loadMore: () -> Unit = {},
+    val retry: () -> Unit = {},
+    val badge: (Int) -> String? = { null },
+) {
+    val focusable: Boolean get() = cards.isNotEmpty() || error != null
 }
 
+@OptIn(ExperimentalComposeUiApi::class)
 @Composable
 fun HomeScreen() {
     val actions = LocalAppActions.current
     val tabsFocused = LocalTabsFocused.current
+    val scope = rememberCoroutineScope()
     val history by KinoApp.library.history.collectAsState()
     var episodes by remember { mutableStateOf<List<EpisodeUpdate>>(emptyList()) }
     var episodesLoading by remember { mutableStateOf(true) }
@@ -66,7 +83,7 @@ fun HomeScreen() {
         }
     }
 
-    // Состояния живут дольше ленивых элементов: уход ряда за экран их не сбрасывает.
+    // Состояния рядов не зависят от их присутствия в LazyColumn.
     val categories = Sections.homeRows.map { section ->
         rememberPagedList(section.slug) { page -> KinoApp.repository.category(section.slug, page) }
     }
@@ -74,193 +91,155 @@ fun HomeScreen() {
     val historyState = rememberLazyListState()
     val episodesState = rememberLazyListState()
     val columnState = rememberLazyListState()
-    val playFocus = remember { FocusRequester() }
-    val detailsFocus = remember { FocusRequester() }
-
-    var savedRow by rememberSaveable { mutableStateOf(BANNER) }
+    val rowFocus = remember {
+        (listOf(HISTORY, EPISODES) + Sections.homeRows.map { it.slug })
+            .associateWith { HomeRowFocus() }
+    }
+    var savedRow by rememberSaveable { mutableStateOf<String?>(null) }
     var savedIndex by rememberSaveable { mutableIntStateOf(0) }
     var savedUrl by rememberSaveable { mutableStateOf<String?>(null) }
-    // Разовое восстановление при входе или повторе загрузки; стрелки обрабатывает Compose.
-    var pendingFocus by remember {
-        mutableStateOf<HomeFocusTarget?>(HomeFocusTarget(savedRow, savedIndex, savedUrl))
-    }
-    var focusedTitle by remember { mutableStateOf<HomeBannerTitle?>(null) }
-    var bannerHasFocus by remember { mutableStateOf(savedRow == BANNER) }
-    val fallback = episodes.firstOrNull()?.let { HomeBannerTitle(it.card, it) }
-        ?: if (!episodesLoading) {
-            (history.firstOrNull() ?: categories.firstNotNullOfOrNull { it.items.firstOrNull() })
-                ?.let { HomeBannerTitle(it) }
-        } else {
-            null
-        }
-    val requestedTitle = if (bannerHasFocus) fallback else focusedTitle ?: fallback
-    var banner by remember { mutableStateOf<HomeBannerTitle?>(null) }
-    LaunchedEffect(requestedTitle) {
-        if (banner != null) delay(300)
-        banner = requestedTitle
-    }
-
-    fun saveFocus(target: HomeFocusTarget) {
-        savedRow = target.row
-        savedIndex = target.index
-        savedUrl = target.url
-    }
-
-    val rowKeys = buildList {
-        if (history.isNotEmpty()) add(HISTORY)
-        add(EPISODES)
-        Sections.homeRows.forEach { add(it.slug) }
-    }
-    val firstFocusableRow = when {
-        history.isNotEmpty() -> HISTORY
-        episodes.isNotEmpty() || episodesError != null -> EPISODES
-        else -> categories.indexOfFirst { it.items.isNotEmpty() || it.error != null }
-            .takeIf { it >= 0 }
-            ?.let { Sections.homeRows[it].slug }
-    }
-    val bannerUnavailable = requestedTitle == null && !episodesLoading && categories.none { it.isLoading }
-
-    // После возврата догружаем страницы до сохранённого постера.
-    val restoringCategory = Sections.homeRows.indexOfFirst { it.slug == pendingFocus?.row }
-    val restoringList = categories.getOrNull(restoringCategory)
-    LaunchedEffect(
-        pendingFocus,
-        restoringList?.items?.size,
-        restoringList?.isLoading,
-        restoringList?.error,
-        restoringList?.endReached,
-    ) {
-        val target = pendingFocus ?: return@LaunchedEffect
-        val list = restoringList ?: return@LaunchedEffect
-        if (target.index >= list.items.size && list.items.none { it.url == target.url } &&
-            !list.isLoading && list.error == null && !list.endReached
-        ) {
-            list.loadMore()
-        }
-    }
-
-    LaunchedEffect(pendingFocus, rowKeys) {
-        val target = pendingFocus ?: return@LaunchedEffect
-        if (target.row == BANNER) return@LaunchedEffect
-        val index = rowKeys.indexOf(target.row)
-        if (index < 0) {
-            pendingFocus = HomeFocusTarget(BANNER)
-        } else if (columnState.layoutInfo.visibleItemsInfo.none { it.key == target.row }) {
-            columnState.scrollToItem(index)
-        }
-    }
-
-    LaunchedEffect(pendingFocus, banner != null, firstFocusableRow, bannerUnavailable) {
-        val target = pendingFocus ?: return@LaunchedEffect
-        if (target.row != BANNER) return@LaunchedEffect
-        if (banner != null) {
-            withFrameNanos { }
-            if (!tabsFocused.value) {
-                if (target.index == 1) detailsFocus.requestFocus() else playFocus.requestFocus()
-            }
-            pendingFocus = null
-        } else if (bannerUnavailable && firstFocusableRow != null) {
-            pendingFocus = HomeFocusTarget(firstFocusableRow)
-        }
-    }
-
-    Column(Modifier.fillMaxSize().background(KinoColors.Background)) {
-        HomeBanner(
-            title = banner,
-            loading = episodesLoading,
-            playFocus = playFocus,
-            detailsFocus = detailsFocus,
-            onButtonFocused = { index ->
-                pendingFocus = null
-                bannerHasFocus = true
-                saveFocus(HomeFocusTarget(BANNER, index))
-            },
-            onPlay = { banner?.let { actions.play(it.card) } },
-            onDetails = { banner?.let { actions.openDetails(it.card) } },
+    // Только вход на экран и повтор загрузки; нажатия стрелок сюда не попадают.
+    var restoreTarget by remember {
+        mutableStateOf<HomeFocusTarget?>(
+            HomeFocusTarget(savedRow ?: if (history.isNotEmpty()) HISTORY else EPISODES, savedIndex, savedUrl),
         )
-        LazyColumn(
-            state = columnState,
-            modifier = Modifier.fillMaxWidth().weight(1f),
-            contentPadding = PaddingValues(bottom = 24.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+    }
+    var rowNavigation by remember { mutableStateOf<Job?>(null) }
+
+    val episodeCards = remember(episodes) {
+        episodes.map { it.card.copy(poster = it.bigPoster.ifBlank { it.card.poster }) }
+    }
+    val rows = buildList {
+        if (history.isNotEmpty()) {
+            add(HomeContentRow(HISTORY, "Продолжить просмотр", history, historyState))
+        }
+        add(
+            HomeContentRow(
+                EPISODES, "Новые серии", episodeCards, episodesState,
+                loading = episodesLoading,
+                error = episodesError,
+                retry = {
+                    episodesLoading = true
+                    episodesError = null
+                    episodesAttempt++
+                },
+                badge = { episodes[it].episode },
+            ),
+        )
+        Sections.homeRows.forEachIndexed { index, section ->
+            val list = categories[index]
+            add(
+                HomeContentRow(
+                    section.slug, section.title, list.items, categoryStates[index],
+                    loading = list.isLoading,
+                    error = list.error,
+                    canLoadMore = !list.endReached,
+                    loadMore = { list.loadMore() },
+                    retry = { list.retry() },
+                ),
+            )
+        }
+    }
+    val focusableRows = rows.filter { it.focusable }
+    val restoringRow = rows.firstOrNull { it.key == restoreTarget?.row }
+
+    LaunchedEffect(
+        restoreTarget,
+        restoringRow?.cards,
+        restoringRow?.loading,
+        restoringRow?.error,
+        restoringRow?.canLoadMore,
+        focusableRows.firstOrNull()?.key,
+    ) {
+        val target = restoreTarget ?: return@LaunchedEffect
+        if (tabsFocused.value) {
+            restoreTarget = null
+            return@LaunchedEffect
+        }
+        val row = restoringRow
+        if (row == null || (!row.focusable && !row.loading && !row.canLoadMore)) {
+            focusableRows.firstOrNull()?.let { restoreTarget = HomeFocusTarget(it.key) }
+            return@LaunchedEffect
+        }
+        val foundIndex = row.cards.indexOfFirst { it.url == target.url }
+        if (foundIndex < 0 && target.index >= row.cards.size && row.canLoadMore && row.error == null) {
+            if (!row.loading) row.loadMore()
+            return@LaunchedEffect
+        }
+        if (!row.focusable) return@LaunchedEffect
+
+        val focus = rowFocus.getValue(row.key)
+        val index = if (foundIndex >= 0) {
+            foundIndex
+        } else {
+            target.index.coerceIn(0, row.cards.lastIndex.coerceAtLeast(0))
+        }
+        focus.index = index
+        focus.url = row.cards.getOrNull(index)?.url
+        columnState.scrollToItem(rows.indexOf(row))
+        if (row.cards.isNotEmpty()) {
+            row.state.scrollToItem(index)
+            snapshotFlow { row.state.layoutInfo.visibleItemsInfo.any { it.key == focus.url } }.first { it }
+        }
+        withFrameNanos { }
+        if (!tabsFocused.value) {
+            if (row.cards.isNotEmpty()) focus.poster.requestFocus() else focus.group.requestFocus()
+        }
+        restoreTarget = null
+    }
+
+    fun keepRowVisible(key: String) {
+        val item = columnState.layoutInfo.visibleItemsInfo.firstOrNull { it.key == key }
+        val layout = columnState.layoutInfo
+        if (item != null && item.offset >= layout.viewportStartOffset &&
+            item.offset + item.size <= layout.viewportEndOffset
         ) {
-            if (history.isNotEmpty()) {
-                item(key = HISTORY) {
-                    HomeRow(
-                        title = "Продолжить просмотр",
-                        cards = history,
-                        state = historyState,
-                        target = pendingFocus?.takeIf { it.row == HISTORY },
-                        onFocusHandled = { pendingFocus = null },
-                        onEmpty = { pendingFocus = HomeFocusTarget(BANNER) },
-                        onFocused = { index, card ->
-                            pendingFocus = null
-                            bannerHasFocus = false
-                            focusedTitle = HomeBannerTitle(card)
-                            saveFocus(HomeFocusTarget(HISTORY, index, card.url))
-                        },
-                        onClick = { actions.openDetails(it) },
-                    )
-                }
-            }
-            item(key = EPISODES) {
-                HomeRow(
-                    title = "Новые серии",
-                    // Маленькие картинки этого блока мутные — берём большой постер
-                    cards = episodes.map { it.card.copy(poster = it.bigPoster) },
-                    state = episodesState,
-                    target = pendingFocus?.takeIf { it.row == EPISODES },
-                    loading = episodesLoading,
-                    error = episodesError,
-                    onRetry = {
-                        pendingFocus = HomeFocusTarget(EPISODES)
-                        episodesLoading = true
-                        episodesError = null
-                        episodesAttempt++
-                    },
-                    badge = { index -> episodes[index].episode },
-                    onFocusHandled = { pendingFocus = null },
-                    onEmpty = { pendingFocus = HomeFocusTarget(BANNER) },
-                    onFocused = { index, card ->
-                        pendingFocus = null
-                        bannerHasFocus = false
-                        focusedTitle = HomeBannerTitle(card, episodes[index])
-                        saveFocus(HomeFocusTarget(EPISODES, index, card.url))
-                    },
-                    onClick = { actions.openDetails(it) },
-                )
-            }
-            Sections.homeRows.forEachIndexed { sectionIndex, section ->
-                item(key = section.slug) {
-                    val list = categories[sectionIndex]
-                    HomeRow(
-                        title = section.title,
-                        cards = list.items,
-                        state = categoryStates[sectionIndex],
-                        target = pendingFocus?.takeIf { it.row == section.slug },
-                        loading = list.isLoading,
-                        error = list.error,
-                        waitingForTarget = pendingFocus?.let { target ->
-                            target.row == section.slug && target.index >= list.items.size &&
-                                list.items.none { it.url == target.url } && !list.endReached && list.error == null
-                        } == true,
-                        onRetry = {
-                            pendingFocus = HomeFocusTarget(section.slug, savedIndex, savedUrl)
-                            list.retry()
-                        },
-                        onFocusHandled = { pendingFocus = null },
-                        onEmpty = { pendingFocus = HomeFocusTarget(BANNER) },
-                        onFocused = { index, card ->
-                            pendingFocus = null
-                            bannerHasFocus = false
-                            focusedTitle = HomeBannerTitle(card)
-                            saveFocus(HomeFocusTarget(section.slug, index, card.url))
-                            if (index >= list.items.size - 5 && list.error == null) list.loadMore()
-                        },
-                        onClick = { actions.openDetails(it) },
-                    )
-                }
-            }
+            return
+        }
+        scope.launch { columnState.scrollToItem(rows.indexOfFirst { it.key == key }) }
+    }
+
+
+    LazyColumn(
+        state = columnState,
+        modifier = Modifier.fillMaxSize().background(KinoColors.Background),
+        contentPadding = PaddingValues(bottom = 24.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        items(rows, key = { it.key }) { row ->
+            val focus = rowFocus.getValue(row.key)
+            val rowIndex = focusableRows.indexOfFirst { it.key == row.key }
+            val previous = focusableRows.getOrNull(rowIndex - 1)?.key
+            val next = focusableRows.getOrNull(rowIndex + 1)?.key
+            HomeRow(
+                title = row.title,
+                cards = row.cards,
+                state = row.state,
+                focus = focus,
+                onRowFocused = {
+                    restoreTarget = null
+                    savedRow = row.key
+                    savedIndex = focus.index
+                    savedUrl = focus.url
+                    keepRowVisible(row.key)
+                },
+                onFocused = { index, card ->
+                    focus.index = index
+                    focus.url = card.url
+                    savedRow = row.key
+                    savedIndex = index
+                    savedUrl = card.url
+                    if (index >= row.cards.size - 5 && row.error == null) row.loadMore()
+                },
+                onClick = { actions.openDetails(it) },
+                loading = row.loading,
+                error = row.error,
+                onRetry = {
+                    restoreTarget = HomeFocusTarget(row.key, focus.index, focus.url)
+                    row.retry()
+                },
+                badge = row.badge,
+            )
         }
     }
 }

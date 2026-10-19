@@ -4,13 +4,18 @@ import android.os.SystemClock
 import android.util.LruCache
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.Json
+import java.io.File
 import java.net.URLEncoder
+import java.security.MessageDigest
 
 /**
  * Единая точка получения данных для экранов. Все функции — suspend и сами уходят в фоновый поток.
  * Результаты кэшируются в памяти на 10 минут, чтобы возврат «Назад» не грузил всё заново.
  */
-class Repository(private val client: SiteClient) {
+class Repository(private val client: SiteClient, private val diskDir: File? = null) {
+
+    private val json = Json { ignoreUnknownKeys = true }
 
     private class Entry(val time: Long, val value: Any)
     private val cache = LruCache<String, Entry>(64)
@@ -42,9 +47,36 @@ class Repository(private val client: SiteClient) {
         Parsers.parseLastSeries(client.get(""))
     }
 
-    /** Полная информация о тайтле и его плееры. */
-    suspend fun details(url: String): Details = cached("details:$url") {
-        Parsers.parseDetails(client.get(url), url)
+    /**
+     * Полная информация о тайтле и его плееры. Свежая копия сохраняется на приставку, а если сайт
+     * недоступен — отдаём сохранённую. fresh = true — мимо кэша в памяти (нужно перед запуском плеера:
+     * ссылки на плееры одноразовые и быстро протухают).
+     */
+    suspend fun details(url: String, fresh: Boolean = false): Details {
+        if (fresh) cache.remove("details:$url")
+        return try {
+            cached("details:$url") {
+                Parsers.parseDetails(client.get(url), url).also { saveToDisk(url, it) }
+            }
+        } catch (e: Exception) {
+            cachedDetails(url) ?: throw e
+        }
+    }
+
+    /** Сохранённая на приставке карточка — для мгновенного показа, пока грузится свежая. */
+    fun cachedDetails(url: String): Details? = runCatching {
+        diskFile(url)?.takeIf { it.exists() }?.readText()?.let { json.decodeFromString(Details.serializer(), it) }
+    }.getOrNull()
+
+    private fun saveToDisk(url: String, details: Details) {
+        runCatching { diskFile(url)?.writeText(json.encodeToString(Details.serializer(), details)) }
+    }
+
+    private fun diskFile(url: String): File? {
+        val dir = diskDir ?: return null
+        dir.mkdirs()
+        val hash = MessageDigest.getInstance("MD5").digest(url.toByteArray()).joinToString("") { "%02x".format(it) }
+        return File(dir, "$hash.json")
     }
 
     fun clearMemoryCache() = cache.evictAll()

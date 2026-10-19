@@ -19,6 +19,7 @@ data class Card(
 data class Page(val items: List<Card>, val hasNext: Boolean)
 
 /** Вкладка плеера на странице тайтла («Смотреть онлайн», «Плеер 1»…). */
+@Serializable
 data class PlayerSource(val label: String, val url: String)
 
 /** Новая серия из блока «последние обновления» — с большим постером для баннера. */
@@ -32,6 +33,7 @@ data class EpisodeUpdate(
     val category: String? = null,
 )
 
+@Serializable
 data class Details(
     val url: String,
     val title: String,
@@ -76,4 +78,32 @@ object Sections {
         Section("detektiv", "Детектив"), Section("melodrama", "Мелодрама"), Section("istoricheskie", "Исторические"),
         Section("voennyj", "Военный"), Section("dokumentalnye", "Документальные"), Section("detskij", "Детский"),
     )
+}
+
+/** Где остановился просмотр: серия (как её подписывает плеер) и секунда. */
+@Serializable
+data class WatchProgress(
+    /** Например «1 сезон 3 серия» или название озвучки — что удалось прочитать из плеера. */
+    val label: String? = null,
+    val time: Double = 0.0,
+    val duration: Double = 0.0,
+    /** Подпись плеера на сайте («Смотреть онлайн», «Плеер 1»), чтобы продолжить в том же. */
+    val player: String? = null,
+    val updatedAt: Long = 0,
+) {
+    /** «1 сезон 3 серия · 12:34» */
+    fun text(): String = listOfNotNull(label?.takeIf { it.isNotBlank() }, formatTime(time)).joinToString(" · ")
+
+    /** Досмотрено почти до конца — продолжать нечего. */
+    val finished get() = duration > 0 && time > duration - 60
+
+    companion object {
+        fun formatTime(seconds: Double): String {
+            val s = seconds.toLong().coerceAtLeast(0)
+            val h = s / 3600
+            val m = s % 3600 / 60
+            val sec = s % 60
+            return if (h > 0) "%d:%02d:%02d".format(h, m, sec) else "%d:%02d".format(m, sec)
+        }
+    }
 }

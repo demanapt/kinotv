@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Color
+import android.net.Uri
 import android.os.Bundle
 import android.os.Message
 import android.os.SystemClock
@@ -30,23 +31,30 @@ import com.personal.kinotv.AdBlocker
 import com.personal.kinotv.CursorView
 import com.personal.kinotv.KinoApp
 import com.personal.kinotv.data.SiteClient
+import com.personal.kinotv.data.WatchProgress
 
 /**
- * Плеер сайта на весь экран. Сам плеер — сторонний iframe, поэтому внутри него управляем курсором.
- * Первое OK нажимает туда, где курсор (он стоит на кнопке ▶). Когда курсор спрятался (3 с без нажатий),
- * OK — пауза, любая стрелка — снова курсор. Стрелками плееры сайта не перематывают — только курсором.
+ * Плеер сайта на весь экран. Если WebView поддерживает мост (PlayerBridge), пульт управляет плеером
+ * напрямую: OK — пауза, ←/→ — перемотка, ↓ — панель со временем, ↑ — курсор для выбора серии и озвучки.
+ * Без моста — как раньше: первое OK нажимает в позицию курсора (кнопка ▶), дальше OK — пауза.
  */
 class PlayerActivity : Activity() {
 
     companion object {
         private const val EXTRA_URL = "url"
         private const val EXTRA_TITLE = "title"
+        private const val EXTRA_TITLE_URL = "title_url"
+        private const val EXTRA_PLAYER = "player"
+        private const val SAVE_EVERY_MS = 10_000L
 
-        fun start(context: Context, embedUrl: String, title: String) {
+        /** titleUrl — адрес страницы тайтла: по нему запоминаем, где остановился просмотр. */
+        fun start(context: Context, embedUrl: String, title: String, titleUrl: String, playerLabel: String) {
             context.startActivity(
                 Intent(context, PlayerActivity::class.java)
                     .putExtra(EXTRA_URL, embedUrl)
                     .putExtra(EXTRA_TITLE, title)
+                    .putExtra(EXTRA_TITLE_URL, titleUrl)
+                    .putExtra(EXTRA_PLAYER, playerLabel)
             )
         }
     }
@@ -55,6 +63,19 @@ class PlayerActivity : Activity() {
     private lateinit var fullscreenContainer: FrameLayout
     private lateinit var cursor: CursorView
     private lateinit var progress: ProgressBar
+    private lateinit var overlay: PlayerOverlay
+    private lateinit var bridge: PlayerBridge
+
+    private var titleUrl: String? = null
+    private var playerHost: String? = null
+    private var playerLabel: String? = null
+    private var lastTime = 0.0
+    private var lastDuration = 0.0
+    private var lastLabel: String? = null
+    private var lastPaused = true
+    private var lastSaveAt = 0L
+    /** Где остановились в прошлый раз (в этом же плеере сайта). После первого перехода — null. */
+    private var resumeFrom: WatchProgress? = null
 
     /** Пока по плееру ни разу не нажали, он не получает клавиши — первое OK нажимает туда, где курсор. */
     private var tappedOnce = false
@@ -75,17 +96,27 @@ class PlayerActivity : Activity() {
         }
         progress = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply { max = 100 }
         cursor = CursorView(this)
+        overlay = PlayerOverlay(this)
 
         // Курсор добавлен последним и всегда лежит поверх плеера, в том числе полноэкранного
         root.addView(webView, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
         root.addView(fullscreenContainer, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
         root.addView(progress, FrameLayout.LayoutParams(MATCH_PARENT, (4 * resources.displayMetrics.density).toInt()))
+        root.addView(overlay, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
         root.addView(cursor, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
         setContentView(root)
 
         cursor.onMove = { x, y -> sendHover(x, y) }
         cursor.autoHide = true
         setupWebView()
+
+        titleUrl = intent.getStringExtra(EXTRA_TITLE_URL)
+        playerLabel = intent.getStringExtra(EXTRA_PLAYER)
+        resumeFrom = titleUrl?.let { KinoApp.library.progressFor(it) }
+            ?.takeIf { !it.finished && it.time > 30 && (it.player == null || it.player == playerLabel) }
+        overlay.setTitle(intent.getStringExtra(EXTRA_TITLE))
+        bridge = PlayerBridge(webView, BridgeListener())
+        bridge.install(assets.open("player_hook.js").bufferedReader().use { it.readText() })
 
         val embed = intent.getStringExtra(EXTRA_URL)
         if (embed.isNullOrBlank()) {
@@ -123,21 +154,12 @@ class PlayerActivity : Activity() {
     }
 
     /**
-     * Встраиваем плеер в страницу с адресом сайта: так плеер видит, что его открыли с сайта,
-     * как если бы он стоял на обычной странице фильма.
+     * Открываем страницу плеера напрямую. Плеер проверяет только, что пришли с сайта (заголовок Referer),
+     * а прямое открытие позволяет встроить в него скрипт управления (PlayerBridge).
      */
     private fun loadPlayer(embedUrl: String) {
-        val src = embedUrl.replace("&", "&amp;").replace("\"", "&quot;")
-        val html = """
-            <!DOCTYPE html><html><head>
-            <meta name="viewport" content="width=device-width,initial-scale=1">
-            <style>html,body{margin:0;height:100%;background:#000;overflow:hidden}
-            iframe{border:0;width:100%;height:100%;display:block}</style>
-            </head><body>
-            <iframe src="$src" allow="autoplay; fullscreen; encrypted-media; picture-in-picture" allowfullscreen referrerpolicy="origin"></iframe>
-            </body></html>
-        """.trimIndent()
-        webView.loadDataWithBaseURL(KinoApp.settings.siteUrl, html, "text/html", "utf-8", null)
+        playerHost = Uri.parse(embedUrl).host
+        webView.loadUrl(embedUrl, mapOf("Referer" to KinoApp.settings.siteUrl))
     }
 
     private inner class Client : WebViewClient() {
@@ -147,8 +169,8 @@ class PlayerActivity : Activity() {
         override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
             val scheme = request.url.scheme
             if (scheme != "http" && scheme != "https") return true // intent://, market:// и т.п.
-            // Сама страница плеера уже открыта: любой переход всей страницы — это реклама
-            return request.isForMainFrame
+            // Переходы внутри плеера разрешаем, уход всей страницы на чужой сайт — это реклама
+            return request.isForMainFrame && request.url.host != playerHost
         }
 
         override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
@@ -157,6 +179,7 @@ class PlayerActivity : Activity() {
 
         override fun onPageFinished(view: WebView, url: String) {
             progress.visibility = View.GONE
+            bridge.inject()
         }
     }
 
@@ -209,6 +232,24 @@ class PlayerActivity : Activity() {
         when (val code = event.keyCode) {
             KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_DOWN,
             KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_RIGHT -> {
+                // Курсор спрятан и плеер на связи: ←/→ — перемотка, ↓ — панель, ↑ — курсор
+                if (bridge.connected && !cursor.cursorVisible && code != KeyEvent.KEYCODE_DPAD_UP) {
+                    if (down) when (code) {
+                        KeyEvent.KEYCODE_DPAD_DOWN -> overlay.flash()
+                        else -> {
+                            // Удержание ускоряет: 10 с, потом 30, потом 60
+                            val step = when {
+                                event.repeatCount > 20 -> 60
+                                event.repeatCount > 6 -> 30
+                                else -> 10
+                            }
+                            val delta = if (code == KeyEvent.KEYCODE_DPAD_LEFT) -step else step
+                            bridge.seek(delta)
+                            overlay.flash(if (delta > 0) "»  +$step с" else "«  −$step с")
+                        }
+                    }
+                    return true
+                }
                 if (down && event.repeatCount == 0) cursor.onDirectionKey(code, true)
                 else if (up) cursor.onDirectionKey(code, false)
                 return true
@@ -216,8 +257,14 @@ class PlayerActivity : Activity() {
 
             KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER -> {
                 if (up) {
-                    if (!cursor.cursorVisible && tappedOnce) sendKeyToPage(KeyEvent.KEYCODE_SPACE)
-                    else click()
+                    when {
+                        cursor.cursorVisible || !tappedOnce && !bridge.connected -> click()
+                        bridge.connected -> {
+                            bridge.toggle()
+                            overlay.flash(if (lastPaused) "▶" else "❚❚")
+                        }
+                        else -> sendKeyToPage(KeyEvent.KEYCODE_SPACE)
+                    }
                 }
                 return true
             }
@@ -238,14 +285,27 @@ class PlayerActivity : Activity() {
             }
 
             KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE, KeyEvent.KEYCODE_MEDIA_PLAY, KeyEvent.KEYCODE_MEDIA_PAUSE -> {
-                if (up) sendKeyToPage(KeyEvent.KEYCODE_SPACE)
+                if (up) {
+                    if (bridge.connected) { bridge.toggle(); overlay.flash(if (lastPaused) "▶" else "❚❚") }
+                    else sendKeyToPage(KeyEvent.KEYCODE_SPACE)
+                }
                 return true
             }
 
             KeyEvent.KEYCODE_MEDIA_FAST_FORWARD, KeyEvent.KEYCODE_MEDIA_REWIND -> {
-                if (down) sendKeyToPage(
-                    if (code == KeyEvent.KEYCODE_MEDIA_REWIND) KeyEvent.KEYCODE_DPAD_LEFT else KeyEvent.KEYCODE_DPAD_RIGHT
-                )
+                if (down && bridge.connected) {
+                    val delta = if (code == KeyEvent.KEYCODE_MEDIA_REWIND) -30 else 30
+                    bridge.seek(delta)
+                    overlay.flash(if (delta > 0) "»  +30 с" else "«  −30 с")
+                }
+                return true
+            }
+
+            KeyEvent.KEYCODE_MEDIA_NEXT, KeyEvent.KEYCODE_MEDIA_PREVIOUS -> {
+                if (up && bridge.connected) {
+                    if (code == KeyEvent.KEYCODE_MEDIA_NEXT) bridge.next() else bridge.prev()
+                    overlay.flash(if (code == KeyEvent.KEYCODE_MEDIA_NEXT) "Следующая серия" else "Предыдущая серия")
+                }
                 return true
             }
         }
@@ -305,10 +365,50 @@ class PlayerActivity : Activity() {
         target.dispatchKeyEvent(KeyEvent(now, now, KeyEvent.ACTION_UP, keyCode, 0))
     }
 
+    private inner class BridgeListener : PlayerBridge.Listener {
+        override fun onProgress(time: Double, duration: Double, paused: Boolean, label: String?) {
+            lastTime = time
+            lastDuration = duration
+            lastPaused = paused
+            if (label != null) lastLabel = label
+            tappedOnce = true // плеер запущен и получает команды
+            // Серию и озвучку плеер восстанавливает сам; точную минуту выставляем мы
+            resumeFrom?.let { saved ->
+                resumeFrom = null
+                val sameEpisode = saved.label == null || lastLabel == null || saved.label == lastLabel
+                if (sameEpisode && kotlin.math.abs(time - saved.time) > 15) {
+                    bridge.seekTo(saved.time)
+                    overlay.flash("Продолжаю с ${WatchProgress.formatTime(saved.time)}")
+                }
+            }
+            overlay.update(time, duration, lastLabel)
+            saveProgress(force = false)
+        }
+
+        override fun onResumed(text: String) {
+            toast("Продолжаю: $text")
+            overlay.flash()
+        }
+    }
+
+    /** Запоминаем место остановки, чтобы в следующий раз продолжить с него. */
+    private fun saveProgress(force: Boolean) {
+        val url = titleUrl ?: return
+        if (lastDuration <= 0) return
+        val now = System.currentTimeMillis()
+        if (!force && now - lastSaveAt < SAVE_EVERY_MS) return
+        lastSaveAt = now
+        KinoApp.library.saveProgress(
+            url,
+            WatchProgress(label = lastLabel, time = lastTime, duration = lastDuration, player = playerLabel, updatedAt = now),
+        )
+    }
+
     private fun toast(text: String) = Toast.makeText(this, text, Toast.LENGTH_SHORT).show()
 
     override fun onPause() {
         super.onPause()
+        saveProgress(force = true)
         cursor.releaseAll()
         CookieManager.getInstance().flush()
         webView.onPause()

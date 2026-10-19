@@ -33,7 +33,8 @@ fun DetailsScreen(url: String) {
 
 @Composable
 private fun DetailsPage(url: String) {
-    var details by remember { mutableStateOf<Details?>(null) }
+    // Сохранённая на приставке копия показывается сразу, свежая с сайта подменяет её, когда загрузится
+    var details by remember { mutableStateOf<Details?>(KinoApp.repository.cachedDetails(url)) }
     var error by remember { mutableStateOf<String?>(null) }
     var attempt by remember { mutableIntStateOf(0) }
     val retryFocus = remember { FocusRequester() }
@@ -44,7 +45,8 @@ private fun DetailsPage(url: String) {
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            error = e.message?.takeIf { it.isNotBlank() } ?: "Ошибка загрузки"
+            // Если уже показана сохранённая копия — ошибку сети не показываем
+            if (details == null) error = e.message?.takeIf { it.isNotBlank() } ?: "Ошибка загрузки"
         }
     }
 
