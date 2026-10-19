@@ -21,11 +21,6 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.focusRestorer
-import androidx.compose.ui.input.key.Key
-import androidx.compose.ui.input.key.KeyEventType
-import androidx.compose.ui.input.key.key
-import androidx.compose.ui.input.key.onPreviewKeyEvent
-import androidx.compose.ui.input.key.type
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
@@ -44,10 +39,8 @@ internal fun HomeRow(
     cards: List<Card>,
     state: LazyListState,
     target: HomeFocusTarget?,
-    upFocus: FocusRequester?,
     onFocusHandled: () -> Unit,
     onEmpty: () -> Unit,
-    onVerticalMove: (Int, Boolean) -> Boolean,
     onFocused: (Int, Card) -> Unit,
     onClick: (Card) -> Unit,
     loading: Boolean = false,
@@ -82,11 +75,7 @@ internal fun HomeRow(
         }
     }
 
-    Column(
-        Modifier.fillMaxWidth().focusProperties {
-            if (upFocus != null) up = upFocus
-        },
-    ) {
+    Column(Modifier.fillMaxWidth()) {
         Text(
             title,
             style = MaterialTheme.typography.titleMedium,
@@ -112,7 +101,7 @@ internal fun HomeRow(
                         .fillMaxWidth()
                         .then(
                             if (target != null) {
-                                // Явный переход к соседнему постеру важнее истории группы.
+                                // При входе восстанавливаем сохранённый постер, а не историю группы.
                                 Modifier.focusProperties { enter = { FocusRequester.Default } }
                             } else {
                                 Modifier
@@ -127,15 +116,7 @@ internal fun HomeRow(
                         PosterCard(
                             card = card,
                             onClick = { onClick(card) },
-                            modifier = (if (index == targetIndex) Modifier.focusRequester(posterFocus) else Modifier)
-                                .onPreviewKeyEvent {
-                                    if (it.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
-                                    when (it.key) {
-                                        Key.DirectionUp -> onVerticalMove(index, false)
-                                        Key.DirectionDown -> onVerticalMove(index, true)
-                                        else -> false
-                                    }
-                                },
+                            modifier = if (index == targetIndex) Modifier.focusRequester(posterFocus) else Modifier,
                             width = 120.dp,
                             onFocused = { onFocused(index, card) },
                             badge = badge(index),

@@ -16,11 +16,6 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.input.key.Key
-import androidx.compose.ui.input.key.KeyEventType
-import androidx.compose.ui.input.key.key
-import androidx.compose.ui.input.key.onPreviewKeyEvent
-import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -41,7 +36,6 @@ internal fun HomeBanner(
     playFocus: FocusRequester,
     detailsFocus: FocusRequester,
     onButtonFocused: (Int) -> Unit,
-    onDown: () -> Unit,
     onPlay: () -> Unit,
     onDetails: () -> Unit,
 ) {
@@ -100,14 +94,7 @@ internal fun HomeBanner(
                 )
             }
             Row(
-                modifier = Modifier.padding(top = 4.dp).onPreviewKeyEvent {
-                    if (it.key == Key.DirectionDown && it.type == KeyEventType.KeyDown) {
-                        onDown()
-                        true
-                    } else {
-                        false
-                    }
-                },
+                modifier = Modifier.padding(top = 4.dp),
                 horizontalArrangement = Arrangement.spacedBy(16.dp),
             ) {
                 Button(

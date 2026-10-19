@@ -28,7 +28,6 @@ import com.personal.kinotv.data.Sections
 import com.personal.kinotv.ui.common.LocalAppActions
 import com.personal.kinotv.ui.common.rememberPagedList
 import com.personal.kinotv.ui.theme.KinoColors
-import kotlin.math.abs
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 
@@ -79,6 +78,7 @@ fun HomeScreen() {
     var savedRow by rememberSaveable { mutableStateOf(BANNER) }
     var savedIndex by rememberSaveable { mutableIntStateOf(0) }
     var savedUrl by rememberSaveable { mutableStateOf<String?>(null) }
+    // Разовое восстановление при входе или повторе загрузки; стрелки обрабатывает Compose.
     var pendingFocus by remember {
         mutableStateOf<HomeFocusTarget?>(HomeFocusTarget(savedRow, savedIndex, savedUrl))
     }
@@ -109,37 +109,14 @@ fun HomeScreen() {
         add(EPISODES)
         Sections.homeRows.forEach { add(it.slug) }
     }
-    val navigableRows = buildList {
-        if (history.isNotEmpty()) add(HISTORY)
-        if (episodes.isNotEmpty() || episodesError != null) add(EPISODES)
-        Sections.homeRows.forEachIndexed { index, section ->
-            if (categories[index].items.isNotEmpty() || categories[index].error != null) add(section.slug)
-        }
+    val firstFocusableRow = when {
+        history.isNotEmpty() -> HISTORY
+        episodes.isNotEmpty() || episodesError != null -> EPISODES
+        else -> categories.indexOfFirst { it.items.isNotEmpty() || it.error != null }
+            .takeIf { it >= 0 }
+            ?.let { Sections.homeRows[it].slug }
     }
-    val firstFocusableRow = navigableRows.firstOrNull()
-    val rowStates = buildMap {
-        put(HISTORY, historyState)
-        put(EPISODES, episodesState)
-        Sections.homeRows.forEachIndexed { index, section -> put(section.slug, categoryStates[index]) }
-    }
-
-    fun moveToRow(row: String, index: Int, down: Boolean): Boolean {
-        val position = navigableRows.indexOf(row)
-        if (position < 0) return false
-        val nextRow = navigableRows.getOrNull(position + if (down) 1 else -1) ?: return false
-        val currentState = rowStates.getValue(row)
-        val nextState = rowStates.getValue(nextRow)
-        val currentItem = currentState.layoutInfo.visibleItemsInfo.firstOrNull { it.index == index }
-        val center = currentItem?.let { it.offset + it.size / 2 }
-        val nearest = if (center != null) {
-            nextState.layoutInfo.visibleItemsInfo.minByOrNull { abs(it.offset + it.size / 2 - center) }?.index
-        } else {
-            null
-        }
-        val nextIndex = nearest ?: (nextState.firstVisibleItemIndex + index - currentState.firstVisibleItemIndex)
-        pendingFocus = HomeFocusTarget(nextRow, nextIndex.coerceAtLeast(0))
-        return true
-    }
+    val bannerUnavailable = requestedTitle == null && !episodesLoading && categories.none { it.isLoading }
 
     // После возврата догружаем страницы до сохранённого постера.
     val restoringCategory = Sections.homeRows.indexOfFirst { it.slug == pendingFocus?.row }
@@ -171,14 +148,14 @@ fun HomeScreen() {
         }
     }
 
-    LaunchedEffect(pendingFocus, banner != null, firstFocusableRow, episodesLoading) {
+    LaunchedEffect(pendingFocus, banner != null, firstFocusableRow, bannerUnavailable) {
         val target = pendingFocus ?: return@LaunchedEffect
         if (target.row != BANNER) return@LaunchedEffect
         if (banner != null) {
             withFrameNanos { }
             if (target.index == 1) detailsFocus.requestFocus() else playFocus.requestFocus()
             pendingFocus = null
-        } else if (!episodesLoading && firstFocusableRow != null) {
+        } else if (bannerUnavailable && firstFocusableRow != null) {
             pendingFocus = HomeFocusTarget(firstFocusableRow)
         }
     }
@@ -194,7 +171,6 @@ fun HomeScreen() {
                 bannerHasFocus = true
                 saveFocus(HomeFocusTarget(BANNER, index))
             },
-            onDown = { firstFocusableRow?.let { pendingFocus = HomeFocusTarget(it) } },
             onPlay = { banner?.let { actions.play(it.card) } },
             onDetails = { banner?.let { actions.openDetails(it.card) } },
         )
@@ -211,10 +187,8 @@ fun HomeScreen() {
                         cards = history,
                         state = historyState,
                         target = pendingFocus?.takeIf { it.row == HISTORY },
-                        upFocus = playFocus.takeIf { banner != null },
                         onFocusHandled = { pendingFocus = null },
                         onEmpty = { pendingFocus = HomeFocusTarget(BANNER) },
-                        onVerticalMove = { index, down -> moveToRow(HISTORY, index, down) },
                         onFocused = { index, card ->
                             pendingFocus = null
                             bannerHasFocus = false
@@ -232,7 +206,6 @@ fun HomeScreen() {
                     cards = episodes.map { it.card.copy(poster = it.bigPoster) },
                     state = episodesState,
                     target = pendingFocus?.takeIf { it.row == EPISODES },
-                    upFocus = playFocus.takeIf { history.isEmpty() && banner != null },
                     loading = episodesLoading,
                     error = episodesError,
                     onRetry = {
@@ -244,7 +217,6 @@ fun HomeScreen() {
                     badge = { index -> episodes[index].episode },
                     onFocusHandled = { pendingFocus = null },
                     onEmpty = { pendingFocus = HomeFocusTarget(BANNER) },
-                    onVerticalMove = { index, down -> moveToRow(EPISODES, index, down) },
                     onFocused = { index, card ->
                         pendingFocus = null
                         bannerHasFocus = false
@@ -262,7 +234,6 @@ fun HomeScreen() {
                         cards = list.items,
                         state = categoryStates[sectionIndex],
                         target = pendingFocus?.takeIf { it.row == section.slug },
-                        upFocus = playFocus.takeIf { firstFocusableRow == section.slug && banner != null },
                         loading = list.isLoading,
                         error = list.error,
                         waitingForTarget = pendingFocus?.let { target ->
@@ -275,7 +246,6 @@ fun HomeScreen() {
                         },
                         onFocusHandled = { pendingFocus = null },
                         onEmpty = { pendingFocus = HomeFocusTarget(BANNER) },
-                        onVerticalMove = { index, down -> moveToRow(section.slug, index, down) },
                         onFocused = { index, card ->
                             pendingFocus = null
                             bannerHasFocus = false
