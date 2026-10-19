@@ -12,6 +12,7 @@ import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
 import android.widget.ProgressBar
+import android.util.Log
 import android.widget.Toast
 import org.json.JSONObject
 import java.io.File
@@ -28,6 +29,7 @@ class Updater(private val activity: Activity) {
     companion object {
         const val UPDATE_URL = "https://github.com/demanapt/kinotv/releases/latest/download/version.json"
         const val ACTION_INSTALL_STATUS = "com.personal.kinotv.INSTALL_STATUS"
+        private const val TAG = "KinoUpdate"
     }
 
     private val main = Handler(Looper.getMainLooper())
@@ -36,7 +38,9 @@ class Updater(private val activity: Activity) {
         if (!silent) toast("Проверяю обновления…")
         thread {
             try {
+                Log.i(TAG, "Проверка: $UPDATE_URL")
                 val json = JSONObject(download(UPDATE_URL).toString(Charsets.UTF_8))
+                Log.i(TAG, "Ответ: $json")
                 val code = json.getInt("versionCode")
                 val name = json.optString("versionName", code.toString())
                 val apkUrl = json.getString("apkUrl")
@@ -47,6 +51,7 @@ class Updater(private val activity: Activity) {
                     else if (!silent) toast("У тебя последняя версия (${currentVersionName()})")
                 }
             } catch (e: Exception) {
+                Log.w(TAG, "Ошибка проверки обновлений", e)
                 if (!silent) main.post { toast("Не удалось проверить обновления: ${e.message}") }
             }
         }
@@ -146,6 +151,7 @@ class Updater(private val activity: Activity) {
 
     private fun open(url: String): HttpURLConnection =
         (URL(url).openConnection() as HttpURLConnection).apply {
+            Log.i(TAG, "GET $url")
             connectTimeout = 15000
             readTimeout = 30000
             instanceFollowRedirects = true
