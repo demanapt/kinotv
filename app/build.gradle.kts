@@ -63,6 +63,9 @@ android {
     buildFeatures {
         compose = true
     }
+    testOptions {
+        unitTests.all { it.systemProperty("live", project.findProperty("live") ?: "false") }
+    }
 }
 
 dependencies {
