@@ -228,7 +228,8 @@ fun HomeScreen() {
             item(key = EPISODES) {
                 HomeRow(
                     title = "Новые серии",
-                    cards = episodes.map { it.card },
+                    // Маленькие картинки этого блока мутные — берём большой постер
+                    cards = episodes.map { it.card.copy(poster = it.bigPoster) },
                     state = episodesState,
                     target = pendingFocus?.takeIf { it.row == EPISODES },
                     upFocus = playFocus.takeIf { history.isEmpty() && banner != null },
