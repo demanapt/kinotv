@@ -21,7 +21,15 @@ object AdBlocker {
         "propellerads.com", "propu.sh", "popads.net", "popcash.net", "adsterra.com",
         "exoclick.com", "exosrv.com", "magsrv.com", "realsrv.com", "juicyads.com",
         "trafficjunky.net", "hilltopads.net", "clickadu.com", "onclickads.net", "a-ads.com",
+        // Реклама внутри плееров (ролики перед видео) и их статистика
+        "traffer.net", "temptcdn.com",
     )
+
+    // Рекламные сети плееров меняют домены (agl007.site, agl008.shop…) — ловим по шаблону
+    private val blockedHostPatterns = listOf(Regex("""(^|\.)agl\d+\.[a-z]+$"""))
+
+    // Рекламные ролики с одноразовых CDN узнаются по пути
+    private val blockedPathParts = listOf("/content/stream/agl/")
 
     // Зона .bid почти целиком используется рекламными сетями с меняющимися доменами
     private val blockedSuffixes = listOf(".bid")
@@ -29,6 +37,9 @@ object AdBlocker {
     fun isBlocked(uri: Uri): Boolean {
         val host = uri.host?.lowercase() ?: return false
         if (blockedSuffixes.any { host.endsWith(it) }) return true
+        if (blockedHostPatterns.any { it.containsMatchIn(host) }) return true
+        val path = uri.path.orEmpty()
+        if (blockedPathParts.any { path.contains(it) }) return true
         var h = host
         while (true) {
             if (h in blockedHosts) return true

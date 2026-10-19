@@ -33,7 +33,8 @@ import com.personal.kinotv.data.SiteClient
 
 /**
  * Плеер сайта на весь экран. Сам плеер — сторонний iframe, поэтому внутри него управляем курсором.
- * Когда курсор спрятался (3 с без нажатий): ←/→ — перемотка, OK — пауза, ↑/↓ — снова курсор.
+ * Первое OK нажимает туда, где курсор (он стоит на кнопке ▶). Когда курсор спрятался (3 с без нажатий),
+ * OK — пауза, любая стрелка — снова курсор. Стрелками плееры сайта не перематывают — только курсором.
  */
 class PlayerActivity : Activity() {
 
@@ -54,6 +55,9 @@ class PlayerActivity : Activity() {
     private lateinit var fullscreenContainer: FrameLayout
     private lateinit var cursor: CursorView
     private lateinit var progress: ProgressBar
+
+    /** Пока по плееру ни разу не нажали, он не получает клавиши — первое OK нажимает туда, где курсор. */
+    private var tappedOnce = false
 
     private var customView: View? = null
     private var customViewCallback: WebChromeClient.CustomViewCallback? = null
@@ -205,11 +209,6 @@ class PlayerActivity : Activity() {
         when (val code = event.keyCode) {
             KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_DOWN,
             KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_RIGHT -> {
-                val seekKey = code == KeyEvent.KEYCODE_DPAD_LEFT || code == KeyEvent.KEYCODE_DPAD_RIGHT
-                if (!cursor.cursorVisible && seekKey) {
-                    if (down) sendKeyToPage(code)
-                    return true
-                }
                 if (down && event.repeatCount == 0) cursor.onDirectionKey(code, true)
                 else if (up) cursor.onDirectionKey(code, false)
                 return true
@@ -217,7 +216,7 @@ class PlayerActivity : Activity() {
 
             KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER -> {
                 if (up) {
-                    if (!cursor.cursorVisible) sendKeyToPage(KeyEvent.KEYCODE_SPACE)
+                    if (!cursor.cursorVisible && tappedOnce) sendKeyToPage(KeyEvent.KEYCODE_SPACE)
                     else click()
                 }
                 return true
@@ -257,6 +256,7 @@ class PlayerActivity : Activity() {
     private fun inputTarget(): View = customView ?: webView
 
     private fun click() {
+        tappedOnce = true
         cursor.show()
         cursor.pulse()
         tapAt(cursor.cursorX, cursor.cursorY)
